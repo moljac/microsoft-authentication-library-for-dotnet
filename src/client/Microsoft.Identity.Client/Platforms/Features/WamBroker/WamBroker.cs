@@ -93,7 +93,6 @@ namespace Microsoft.Identity.Client.Platforms.Features.WamBroker
                     "Note that console applications are not currently supported in conjuction with WAM." + ErrorMessageSuffix);
             }
 
-
             if (authenticationRequestParameters.Account != null ||
                 !string.IsNullOrEmpty(authenticationRequestParameters.LoginHint))
             {
@@ -106,6 +105,18 @@ namespace Microsoft.Identity.Client.Platforms.Features.WamBroker
                 WebAccountProvider provider;
                 provider = await GetProviderAsync(authenticationRequestParameters.Authority.AuthorityInfo.CanonicalAuthority, isMsa)
                     .ConfigureAwait(false);
+
+                if (PublicClientApplication.IsOperatingSystemAccount(authenticationRequestParameters.Account))
+                {
+                    var wamResult = await AcquireInteractiveWithoutPickerAsync(
+                        authenticationRequestParameters,
+                        acquireTokenInteractiveParameters.Prompt,
+                        wamPlugin,
+                        provider,
+                        null)
+                        .ConfigureAwait(false);
+                    return CreateMsalTokenResponse(wamResult, wamPlugin, isInteractive: true);
+                }
 
                 var wamAccount = await FindWamAccountForMsalAccountAsync(
                     provider,
@@ -174,11 +185,21 @@ namespace Microsoft.Identity.Client.Platforms.Features.WamBroker
                 // UWP requires being on the UI thread
                 await _synchronizationContext;
 #endif
-
-                var wamResult = await _wamProxy.RequestTokenForWindowAsync(
-                    _parentHandle,
-                    webTokenRequest,
-                    wamAccount).ConfigureAwait(false);
+                IWebTokenRequestResultWrapper wamResult;
+                if (wamAccount != null)
+                {
+                    wamResult = await _wamProxy.RequestTokenForWindowAsync(
+                        _parentHandle,
+                        webTokenRequest,
+                        wamAccount).ConfigureAwait(false);
+                }
+                else
+                {
+                    // default user
+                    wamResult = await _wamProxy.RequestTokenForWindowAsync(
+                          _parentHandle,
+                          webTokenRequest).ConfigureAwait(false);
+                }
                 return wamResult;
 
             }
@@ -210,7 +231,11 @@ namespace Microsoft.Identity.Client.Platforms.Features.WamBroker
 
         private async Task<MsalTokenResponse> AcquireInteractiveWithPickerAsync(
             AuthenticationRequestParameters authenticationRequestParameters)
-        {
+        {            
+            // assume AAD only
+
+
+
             bool isMsaPassthrough = IsMsaPassthrough(authenticationRequestParameters);
             var accountPicker = _accountPickerFactory.Create(
                 _parentHandle,
@@ -374,6 +399,8 @@ namespace Microsoft.Identity.Client.Platforms.Features.WamBroker
                     .ConfigureAwait(false);
             return provider;
         }
+
+      
 
         public async Task<MsalTokenResponse> AcquireTokenSilentDefaultUserAsync(
             AuthenticationRequestParameters authenticationRequestParameters,
@@ -591,12 +618,13 @@ namespace Microsoft.Identity.Client.Platforms.Features.WamBroker
                 case WebTokenRequestStatus.ProviderError:
                     errorCode =
                         wamPlugin.MapTokenRequestError(wamResponse.ResponseStatus, wamResponse.ResponseError?.ErrorCode ?? 0, isInteractive);
-                    errorMessage = 
-                        WamErrorPrefix + 
-                        " " + 
+                    errorMessage =
+                        WamErrorPrefix +
+                        " " +
                         wamPlugin.GetType() +
-                        "Possible cause: invalid redirect uri - please see https://aka.ms/msal-net-wam for details about the redirect uri. Details: " +
-                        wamResponse.ResponseError?.ErrorMessage ;
+                        $" Error Code: {errorCode}." +
+                        $" Possible causes: no Internet connection or invalid redirect uri - please see https://aka.ms/msal-net-wam" +
+                        $" Details: " + wamResponse.ResponseError?.ErrorMessage;
                     internalErrorCode = (wamResponse.ResponseError?.ErrorCode ?? 0).ToString(CultureInfo.InvariantCulture);
                     break;
                 default:
@@ -637,8 +665,8 @@ namespace Microsoft.Identity.Client.Platforms.Features.WamBroker
         }
 
         internal /* for test only */ async Task<bool> IsMsaRequestAsync(
-            Authority authority, 
-            string homeTenantId, 
+            Authority authority,
+            string homeTenantId,
             bool msaPassthrough)
         {
             if (authority.AuthorityInfo.AuthorityType == AuthorityType.B2C)
