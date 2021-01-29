@@ -53,7 +53,7 @@ using AndroidX.Core.View;
 using AndroidX.DrawerLayout.Widget;
 using AndroidX.Fragment.App;
 using Google.Android.Material.Navigation;
-using MSAL.Sample;
+using MSALSample;
 
 namespace MSALSample
 {
